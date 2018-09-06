@@ -2,7 +2,7 @@
 
 # WORK IN PROGRESS, early stages
 
-Copy a file locally or over ssh, and ask before overwriting
+Copy a file locally or over ssh, and ask before overwriting. `pscp` does not ask before overwriting.
 
 * Use `-a` to add a username@hostname:port alias on the form: `alias=username@hostname:port`
 * Use `-r` to remove a remote host alias.
