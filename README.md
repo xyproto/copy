@@ -2,7 +2,7 @@
 
 A better copy command, with a progress bar, concurrent copying and the ability to use host aliases for username+host+port when coping over ssh.
 
-Should always ask before overwriting files. `pscp` can not ask before overwriting.
+Should always ask before overwriting files. `scp` can not ask before overwriting.
 
 # THIS IS A WORK IN PROGRESS AND NOT NEARLY DONE
 
