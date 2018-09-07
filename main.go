@@ -1,101 +1,15 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"sync"
+	"time"
 )
 
-type AliasExpression struct {
-	Alias    string `alias`
-	Username string `username`
-	Hostname string `hostname`
-	Port     int    `port`
-}
-
-var configFile = filepath.Join(os.Getenv("HOME"), ".config/copy.conf")
-
-type Configuration struct {
-	RemoteHosts []AliasExpression
-}
-
-// interpret an alias expression on the form: alias=username@hostname:port
-func NewAliasExpression(unparsedAliasExpression string) (*AliasExpression, error) {
-	if !strings.Contains(unparsedAliasExpression, "=") {
-		return nil, errors.New("Alias expressions must contain an equal sign!")
-	}
-	fields := strings.SplitN(unparsedAliasExpression, "=", 2)
-	alias := fields[0]
-	usernameHostPort := fields[1]
-	var (
-		username string
-		hostPort string
-	)
-	if !strings.Contains(usernameHostPort, "@") {
-		username = os.Getenv("LOGNAME")
-		hostPort = usernameHostPort
-	} else {
-		fields = strings.SplitN(usernameHostPort, "@", 2)
-		username = fields[0]
-		hostPort = fields[1]
-	}
-	var (
-		hostname string
-		port     int
-		err      error
-	)
-	if !strings.Contains(hostPort, ":") {
-		hostname = hostPort
-		port = 22
-	} else {
-		fields = strings.SplitN(hostPort, ":", 2)
-		hostname = fields[0]
-		port, err = strconv.Atoi(fields[1])
-		if err != nil {
-			port = 22
-		}
-	}
-	ae := &AliasExpression{}
-	ae.Alias = alias
-	ae.Username = username
-	ae.Hostname = hostname
-	ae.Port = port
-	return ae, nil
-}
-
-func ReadConfig(filename string) (*Configuration, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	decoder := json.NewDecoder(file)
-	config := &Configuration{}
-	err = decoder.Decode(config)
-	if err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func WriteConfig(filename string, config *Configuration) error {
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	err = encoder.Encode(config)
-	if err != nil {
-		return err
-	}
-	return nil
-}
+const versionString = "copy 0.1"
 
 // Check if the given list of strings has the given string
 func has(sl []string, s string) bool {
@@ -107,17 +21,17 @@ func has(sl []string, s string) bool {
 	return false
 }
 
-// Check if the given list of aliasExpressions contains the given alias
-func ahas(aes []AliasExpression, ae *AliasExpression) bool {
-	for _, e := range aes {
-		if e.Alias == ae.Alias {
-			return true
-		}
+// Check if the given path is a directory
+func IsDir(path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, nil
 	}
-	return false
+	return fi.IsDir(), err
 }
 
 func main() {
+	// Start out by reading in the configuration, if available
 	conf, err := ReadConfig(configFile)
 	if err != nil {
 		conf = &Configuration{}
@@ -128,28 +42,47 @@ func main() {
 		}
 	}
 
+	// Parse flags, if any
 	var (
-		unparsedAliasExpression, removeHost string
-		listHosts                           bool
+		unparsedRemoteHostAlias, removeHost string
+		listHosts, verbose, version, help   bool
 	)
-	flag.StringVar(&unparsedAliasExpression, "a", "", "Add a host alias")
+	flag.StringVar(&unparsedRemoteHostAlias, "a", "", "Add a host alias")
 	flag.StringVar(&removeHost, "r", "", "Remove a host alias")
 	flag.BoolVar(&listHosts, "l", false, "List host aliases")
+	flag.BoolVar(&verbose, "v", false, "Verbose output")
+	flag.BoolVar(&version, "version", false, "Version info")
+	flag.BoolVar(&help, "help", false, "Help output")
 	flag.Parse()
 
+	if version {
+		fmt.Println(versionString)
+		os.Exit(1)
+	}
+
+	if help {
+		fmt.Println(versionString)
+		fmt.Println("TO IMPLEMENT: USAGE INFORMATION") // TODO
+	}
+
+	// Perform actions, based on the given flags and arguments
+
 	if listHosts {
-		fmt.Println(conf.RemoteHosts)
+		for _, rh := range conf.RemoteHosts {
+			// &rh instead of rh to print with .String() instead of printing the structure
+			fmt.Println(&rh)
+		}
 		os.Exit(0)
 	}
 
-	if unparsedAliasExpression != "" {
-		newAE, err := NewAliasExpression(unparsedAliasExpression)
+	if unparsedRemoteHostAlias != "" {
+		newAE, err := NewRemoteHostAlias(unparsedRemoteHostAlias)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		if ahas(conf.RemoteHosts, newAE) {
-			var newRemoteHosts []AliasExpression
+			var newRemoteHosts []RemoteHostAlias
 			for _, aliasExpression := range conf.RemoteHosts {
 				if aliasExpression.Alias == newAE.Alias {
 					// Already exists
@@ -172,7 +105,7 @@ func main() {
 	}
 
 	if removeHost != "" {
-		var filteredRemoteHosts []AliasExpression
+		var filteredRemoteHosts []RemoteHostAlias
 		for _, aliasExpression := range conf.RemoteHosts {
 			if aliasExpression.Alias == removeHost {
 				//fmt.Printf("REMOVED %s\n", removeHost)
@@ -190,22 +123,97 @@ func main() {
 		os.Exit(0)
 	}
 
-	if len(flag.Args()) < 2 {
-		fmt.Fprintln(os.Stderr, "Two arguments are required:")
-		fmt.Fprintln(os.Stderr, "copy FROM TO")
+	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "At least one arguments is required:")
+		fmt.Fprintln(os.Stderr, "copy FROM")
 		os.Exit(1)
 	}
 
-	from := flag.Args()[0]
-	to := flag.Args()[1]
+	to := ""
+	froms := args
+	if len(args) > 1 {
+		froms = args[0 : len(args)-1]
+		to = args[len(args)-1]
+	}
 
-	// First assume that from and to are local files.
-	// Look into aliases only if local files of the same names are not found.
+	// Set up the source to copy files from
+	so := &Source{}
+	var fromFiles []string
+	for _, globExpression := range froms {
+		globResult, err := filepath.Glob(globExpression)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fromFiles = append(fromFiles, globResult...)
+	}
+	if len(fromFiles) == 0 {
+		// Assume that the rest of the arguments are remote files
+		for _, fromExpression := range froms {
+			rf, err := NewRemoteFile(fromExpression, conf.RemoteHosts)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, fromExpression+" does not exist.")
+				os.Exit(1)
+			}
+			so.RemoteFiles = append(so.RemoteFiles, rf)
+		}
+		if len(so.RemoteFiles) == 0 {
+			// TODO: This never happens?
+			fmt.Fprintln(os.Stderr, "None of these are valid remote file expressions:")
+			for _, fromExpression := range froms {
+				fmt.Fprintf(os.Stderr, "\t%s\n", fromExpression)
+			}
+			os.Exit(1)
+		}
+	} else {
+		so.Files = fromFiles
+	}
 
-	a, b := os.Stat(from)
-	c, d := os.Stat(to)
+	// Set up the target to copy files to
+	ta := &Target{}
+	if to == "" {
+		var err error
+		if ta.Directory, err = os.Getwd(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	} else {
+		if ok, err := IsDir(to); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		} else if ok {
+			// A directory
+			ta.Directory = to
+		} else {
+			// Not a directory, check if it's a remote host alias
+			ae, err := aget(conf.RemoteHosts, to)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, to+" is not a file and not a remote host alias")
+				os.Exit(1)
+			}
+			ta.RemoteHost = ae
+		}
+	}
 
-	fmt.Println(a, b, c, d)
+	if verbose {
+		fmt.Println(so)
+		fmt.Println(ta)
+	}
 
-	fmt.Println("TO IMPLEMENT: COPY", from, to)
+	pk := NewSimpleProgressKeeper()
+
+	// Copy the files and report the progress
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		err := so.Copy(wg, ta, pk)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}()
+	wg.Add(1)
+	//go Write(wg, pk, 100*time.Millisecond)
+	go Spin(wg, pk, 100*time.Millisecond)
+	wg.Wait()
 }
