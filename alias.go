@@ -1,4 +1,3 @@
-// alias.go
 package main
 
 import (
@@ -23,11 +22,10 @@ type RemoteFile struct {
 	Path     string
 }
 
-// interpret an expression on the form: username@hostname:port/path
+// interpret an expression on the form: username@hostname:port_path
 func NewRemoteFile(unparsedRemoteFile string, hostAliases []RemoteHostAlias) (*RemoteFile, error) {
-	// TODO: Find a better separator than "/" for separating host and path? It is used in some URIs, though.
-	if (!strings.Contains(unparsedRemoteFile, "@") && !strings.Contains(unparsedRemoteFile, ":")) && strings.Contains(unparsedRemoteFile, "/") {
-		fields := strings.SplitN(unparsedRemoteFile, "/", 2)
+	if (!strings.Contains(unparsedRemoteFile, "@") && !strings.Contains(unparsedRemoteFile, ":")) && strings.Contains(unparsedRemoteFile, "_") {
+		fields := strings.SplitN(unparsedRemoteFile, "_", 2)
 		if fields[0] != "" {
 			// Check if the first part of the expression is a remote host alias
 			for _, rh := range hostAliases {
@@ -60,10 +58,10 @@ func NewRemoteFile(unparsedRemoteFile string, hostAliases []RemoteHostAlias) (*R
 		hostPortPath = fields[1]
 	}
 	// TODO: Also support file expressions on the form hostname:filename
-	if !strings.Contains(hostPortPath, "/") {
-		return nil, errors.New("A remote file must have a path: username@hostname:port/path")
+	if !strings.Contains(hostPortPath, "_") {
+		return nil, errors.New("A remote file must have a path: username@hostname:port_path")
 	}
-	fields := strings.SplitN(hostPortPath, "/", 2)
+	fields := strings.SplitN(hostPortPath, "_", 2)
 	hostPort := fields[0]
 	path := fields[1]
 	var (
@@ -87,7 +85,7 @@ func NewRemoteFile(unparsedRemoteFile string, hostAliases []RemoteHostAlias) (*R
 		}
 	}
 	if hostname == "" {
-		return nil, errors.New("A remote file must have a hostname: username@hostname:port/path")
+		return nil, errors.New("A remote file must have a hostname: username@hostname:port_path")
 	}
 	rf := &RemoteFile{}
 	rf.Username = username
@@ -190,7 +188,7 @@ func (ae *RemoteFile) String() string {
 		s += fmt.Sprintf(":%d", ae.Port)
 	}
 	if ae.Path != "" {
-		s += "/" + ae.Path
+		s += "_" + ae.Path
 	}
 	return s
 }
