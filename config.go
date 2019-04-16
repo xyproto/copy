@@ -11,7 +11,7 @@ type Configuration struct {
 	RemoteHosts []RemoteHostAlias
 }
 
-var configFile = filepath.Join(os.Getenv("HOME"), ".config/copy.conf")
+var configFile = filepath.Join(os.Getenv("HOME"), ".config/copy/config")
 
 func ReadConfig(filename string) (*Configuration, error) {
 	file, err := os.Open(filename)
